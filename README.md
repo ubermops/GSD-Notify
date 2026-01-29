@@ -34,7 +34,7 @@ rm ~/.claude/gsd-notify.sh ~/.claude/gsd-wait.sh ~/.claude/gsd-activity.sh
 rm ~/.claude/.waiting_since ~/.claude/.notified
 ```
 
-Then manually remove the `Stop`, `SubagentStop`, and `UserPromptSubmit` hooks from `~/.claude/settings.json`.
+Then manually remove the `Stop`, `SubagentStop`, `UserPromptSubmit`, and `SessionStart` hooks from `~/.claude/settings.json`.
 
 ## License
 

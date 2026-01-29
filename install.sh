@@ -201,6 +201,9 @@ addHook('SubagentStop', 'gsd-wait.sh');
 // User input: clear the timer (user is active)
 addHook('UserPromptSubmit', 'gsd-activity.sh');
 
+// Session start: clear stale files from previous sessions
+addHook('SessionStart', 'gsd-activity.sh');
+
 fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
 " 2>&1; then
             : # Success
@@ -232,6 +235,13 @@ fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
           { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
+        ]
+      }
     ]
   }
 }
@@ -257,6 +267,13 @@ else
       }
     ],
     "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
+        ]
+      }
+    ],
+    "SessionStart": [
       {
         "hooks": [
           { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
