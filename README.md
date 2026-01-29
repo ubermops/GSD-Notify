@@ -24,13 +24,13 @@ Done. You'll get pinged when Claude Code needs your attention.
 
 ## Requirements
 
-- **Claude Code CLI** (`claude` command) - hooks don't work in VSCode extension ([known issue](https://github.com/anthropics/claude-code/issues/16114))
-- macOS, Linux, or Windows (Git Bash/WSL)
+- **Claude Code CLI** (`claude` command) - hooks don't work in IDE extensions like VSCode or JetBrains ([known issue](https://github.com/anthropics/claude-code/issues/16114))
+- macOS, Linux, or Windows (must use Git Bash or WSL — hooks use bash scripts that don't run in Command Prompt/PowerShell)
 - curl (pre-installed on most systems)
 
 ## Known Limitations
 
-- **VSCode extension not supported** - Claude Code's VSCode extension doesn't fire hooks ([issue #16114](https://github.com/anthropics/claude-code/issues/16114)). Use the CLI instead.
+- **IDE extensions not supported** - Hooks only work with the CLI, not IDE extensions like VSCode or JetBrains ([issue #16114](https://github.com/anthropics/claude-code/issues/16114)). Use the CLI instead.
 - **Triggers on any response** - Currently pings after any Claude response, not just questions. Waiting on upstream fix ([issue #12048](https://github.com/anthropics/claude-code/issues/12048)).
 
 ## Uninstall
