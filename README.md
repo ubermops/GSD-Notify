@@ -26,6 +26,14 @@ Done. You'll get pinged when Claude Code stops and awaits input.
 - macOS, Linux, or WSL (Windows users need WSL)
 - curl (pre-installed on most systems)
 
+## Uninstall
+
+```bash
+rm ~/.claude/gsd-notify.sh ~/.claude/.last_ping
+```
+
+Then manually remove the `Stop` and `SubagentStop` hooks from `~/.claude/settings.json`.
+
 ## License
 
 MIT

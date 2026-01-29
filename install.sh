@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 echo "gsd-notify installer"
@@ -12,6 +12,12 @@ if [ -z "$WEBHOOK_URL" ]; then
     exit 1
 fi
 
+# Validate webhook URL format
+if [[ ! "$WEBHOOK_URL" =~ ^https://discord(app)?\.com/api/webhooks/ ]]; then
+    echo "Error: Invalid webhook URL. Should start with https://discord.com/api/webhooks/"
+    exit 1
+fi
+
 # Prompt for Discord ID
 read -p "Your Discord ID: " DISCORD_ID
 if [ -z "$DISCORD_ID" ]; then
@@ -19,12 +25,18 @@ if [ -z "$DISCORD_ID" ]; then
     exit 1
 fi
 
+# Validate Discord ID is numeric
+if [[ ! "$DISCORD_ID" =~ ^[0-9]+$ ]]; then
+    echo "Error: Discord ID should be a number (e.g., 123456789012345678)"
+    exit 1
+fi
+
 # Create ~/.claude directory if it doesn't exist
-mkdir -p ~/.claude
+mkdir -p "$HOME/.claude"
 
 # Write the notification script
-cat > ~/.claude/gsd-notify.sh << 'SCRIPT'
-#!/bin/bash
+cat > "$HOME/.claude/gsd-notify.sh" << 'SCRIPT'
+#!/usr/bin/env bash
 
 WEBHOOK_URL="__WEBHOOK_URL__"
 DISCORD_ID="__DISCORD_ID__"
@@ -36,10 +48,13 @@ NOW=$(date +%s)
 
 # Check cooldown
 if [ -f "$PING_FILE" ]; then
-    LAST_PING=$(cat "$PING_FILE")
-    ELAPSED=$((NOW - LAST_PING))
-    if [ "$ELAPSED" -lt "$COOLDOWN" ]; then
-        exit 0  # Still in cooldown, stay silent
+    LAST_PING=$(cat "$PING_FILE" 2>/dev/null || echo "0")
+    # Ensure LAST_PING is numeric
+    if [[ "$LAST_PING" =~ ^[0-9]+$ ]]; then
+        ELAPSED=$((NOW - LAST_PING))
+        if [ "$ELAPSED" -lt "$COOLDOWN" ]; then
+            exit 0  # Still in cooldown, stay silent
+        fi
     fi
 fi
 
@@ -53,17 +68,25 @@ curl -s -X POST "$WEBHOOK_URL" \
 echo "$NOW" > "$PING_FILE"
 SCRIPT
 
+# Cross-platform sed -i (macOS vs Linux)
+sed_inplace() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
 # Replace placeholders with actual values
-sed -i.bak "s|__WEBHOOK_URL__|$WEBHOOK_URL|g" ~/.claude/gsd-notify.sh
-sed -i.bak "s|__DISCORD_ID__|$DISCORD_ID|g" ~/.claude/gsd-notify.sh
-rm -f ~/.claude/gsd-notify.sh.bak
+sed_inplace "s|__WEBHOOK_URL__|$WEBHOOK_URL|g" "$HOME/.claude/gsd-notify.sh"
+sed_inplace "s|__DISCORD_ID__|$DISCORD_ID|g" "$HOME/.claude/gsd-notify.sh"
 
 # Make executable
-chmod +x ~/.claude/gsd-notify.sh
+chmod +x "$HOME/.claude/gsd-notify.sh"
 
 # Update settings.json with hooks
 SETTINGS_FILE="$HOME/.claude/settings.json"
-HOOK_CMD="bash $HOME/.claude/gsd-notify.sh"
+HOOK_CMD="bash \"$HOME/.claude/gsd-notify.sh\""
 
 # Claude Code requires this nested hook structure:
 # { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "..." }] }] } }
