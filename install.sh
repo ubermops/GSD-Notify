@@ -11,6 +11,13 @@ echo "gsd-notify installer"
 echo "===================="
 echo ""
 
+# When running via "curl | bash", stdin is the script, not the terminal.
+# We must read from /dev/tty to get user input.
+if [ ! -t 0 ]; then
+    # stdin is not a terminal (likely piped from curl)
+    exec < /dev/tty
+fi
+
 # Prompt for webhook URL
 read -p "Webhook URL: " WEBHOOK_URL
 if [ -z "$WEBHOOK_URL" ]; then
