@@ -109,10 +109,9 @@ cat > "$CLAUDE_DIR/gsd-wait.sh" << 'SCRIPT'
 WAIT_FILE="$HOME/.claude/.waiting_since"
 NOTIFY_SCRIPT="$HOME/.claude/gsd-notify.sh"
 
-# Only start waiting if not already waiting
-if [ ! -f "$WAIT_FILE" ]; then
-    date +%s > "$WAIT_FILE"
-fi
+# Always update timestamp to most recent stop
+# (SubagentStop may fire before main agent finishes)
+date +%s > "$WAIT_FILE"
 
 # Spawn delayed notification check (5 min + small buffer)
 (sleep 305 && bash "$NOTIFY_SCRIPT") &
