@@ -63,27 +63,32 @@ CLAUDE_DIR_FOR_HOOK=$(get_claude_path "$CLAUDE_DIR")
 # Create ~/.claude directory if it doesn't exist
 mkdir -p "$CLAUDE_DIR"
 
-# Write the notification script
+# Clean up old files from previous versions
+rm -f "$CLAUDE_DIR/.last_ping" 2>/dev/null
+
+# Write the notification script (called by delayed check)
 cat > "$CLAUDE_DIR/gsd-notify.sh" << 'SCRIPT'
 #!/usr/bin/env bash
 
 WEBHOOK_URL="__WEBHOOK_URL__"
 DISCORD_ID="__DISCORD_ID__"
-PING_FILE="$HOME/.claude/.last_ping"
-COOLDOWN=900  # 15 minutes in seconds
+WAIT_FILE="$HOME/.claude/.waiting_since"
+NOTIFIED_FILE="$HOME/.claude/.notified"
+DELAY=300  # 5 minutes in seconds
 
-# Get current timestamp
+# If no wait file, user already responded - exit silently
+[ ! -f "$WAIT_FILE" ] && exit 0
+
+# If already notified for this wait period, exit silently
+[ -f "$NOTIFIED_FILE" ] && exit 0
+
+# Check if we've been waiting long enough
 NOW=$(date +%s)
-
-# Check cooldown
-if [ -f "$PING_FILE" ]; then
-    LAST_PING=$(cat "$PING_FILE" 2>/dev/null || echo "0")
-    # Ensure LAST_PING is numeric
-    if [[ "$LAST_PING" =~ ^[0-9]+$ ]]; then
-        ELAPSED=$((NOW - LAST_PING))
-        if [ "$ELAPSED" -lt "$COOLDOWN" ]; then
-            exit 0  # Still in cooldown, stay silent
-        fi
+WAIT_START=$(cat "$WAIT_FILE" 2>/dev/null || echo "0")
+if [[ "$WAIT_START" =~ ^[0-9]+$ ]]; then
+    ELAPSED=$((NOW - WAIT_START))
+    if [ "$ELAPSED" -lt "$DELAY" ]; then
+        exit 0  # Not long enough yet
     fi
 fi
 
@@ -93,8 +98,33 @@ curl -s -X POST "$WEBHOOK_URL" \
     -d "{\"content\": \"<@$DISCORD_ID> It's time to GSD!\"}" \
     > /dev/null 2>&1 || true
 
-# Update timestamp
-echo "$NOW" > "$PING_FILE"
+# Mark as notified (so we don't ping again until user responds)
+touch "$NOTIFIED_FILE"
+SCRIPT
+
+# Write the wait-start script (called on Stop)
+cat > "$CLAUDE_DIR/gsd-wait.sh" << 'SCRIPT'
+#!/usr/bin/env bash
+
+WAIT_FILE="$HOME/.claude/.waiting_since"
+NOTIFY_SCRIPT="$HOME/.claude/gsd-notify.sh"
+
+# Only start waiting if not already waiting
+if [ ! -f "$WAIT_FILE" ]; then
+    date +%s > "$WAIT_FILE"
+fi
+
+# Spawn delayed notification check (5 min + small buffer)
+(sleep 305 && bash "$NOTIFY_SCRIPT") &
+SCRIPT
+
+# Write the activity script (called on user input - clears wait state)
+cat > "$CLAUDE_DIR/gsd-activity.sh" << 'SCRIPT'
+#!/usr/bin/env bash
+
+# User is active - clear wait state
+rm -f "$HOME/.claude/.waiting_since" 2>/dev/null
+rm -f "$HOME/.claude/.notified" 2>/dev/null
 SCRIPT
 
 # Escape & for sed replacement (& means "matched pattern" in sed)
@@ -119,12 +149,13 @@ sed_inplace() {
 sed_inplace "s|__WEBHOOK_URL__|$WEBHOOK_ESCAPED|g" "$CLAUDE_DIR/gsd-notify.sh"
 sed_inplace "s|__DISCORD_ID__|$DISCORD_ESCAPED|g" "$CLAUDE_DIR/gsd-notify.sh"
 
-# Make executable
+# Make all scripts executable
 chmod +x "$CLAUDE_DIR/gsd-notify.sh"
+chmod +x "$CLAUDE_DIR/gsd-wait.sh"
+chmod +x "$CLAUDE_DIR/gsd-activity.sh"
 
 # Update settings.json with hooks
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-HOOK_CMD="bash \\\"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\\\""
 
 # Claude Code requires this nested hook structure:
 # { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "..." }] }] } }
@@ -145,19 +176,18 @@ try {
 
 if (!settings.hooks) settings.hooks = {};
 
-const hookEntry = {
-    hooks: [{ type: 'command', command: 'bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"' }]
-};
-
 // Helper to add hook
-function addHook(hookName) {
+function addHook(hookName, scriptName) {
+    const hookEntry = {
+        hooks: [{ type: 'command', command: 'bash \"$CLAUDE_DIR_FOR_HOOK/' + scriptName + '\"' }]
+    };
     if (!settings.hooks[hookName]) {
         settings.hooks[hookName] = [];
     }
-    // Remove old gsd-notify entries
+    // Remove old gsd- entries for this hook
     settings.hooks[hookName] = settings.hooks[hookName].filter(h => {
         if (h.hooks && Array.isArray(h.hooks)) {
-            return !h.hooks.some(inner => inner.command && inner.command.includes('gsd-notify'));
+            return !h.hooks.some(inner => inner.command && inner.command.includes('gsd-'));
         }
         return true;
     });
@@ -165,8 +195,12 @@ function addHook(hookName) {
     settings.hooks[hookName].push(hookEntry);
 }
 
-addHook('Stop');
-addHook('SubagentStop');
+// Stop/SubagentStop: start the 5-min timer
+addHook('Stop', 'gsd-wait.sh');
+addHook('SubagentStop', 'gsd-wait.sh');
+
+// User input: clear the timer (user is active)
+addHook('UserPromptSubmit', 'gsd-activity.sh');
 
 fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
 " 2>&1; then
@@ -182,14 +216,21 @@ fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-wait.sh\"" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-wait.sh\"" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
         ]
       }
     ]
@@ -205,14 +246,21 @@ else
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-wait.sh\"" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-wait.sh\"" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-activity.sh\"" }
         ]
       }
     ]
