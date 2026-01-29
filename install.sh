@@ -116,7 +116,8 @@ NOTIFY_SCRIPT="$HOME/.claude/gsd-notify.sh"
 date +%s > "$WAIT_FILE"
 
 # Spawn delayed notification check (5 min + small buffer)
-(sleep 305 && bash "$NOTIFY_SCRIPT") &
+# nohup ensures process survives if parent shell exits
+nohup bash -c "sleep 305 && bash \"$NOTIFY_SCRIPT\"" >/dev/null 2>&1 &
 SCRIPT
 
 # Write the activity script (called on user input - clears wait state)

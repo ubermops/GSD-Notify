@@ -9,6 +9,7 @@ All notable changes to GSD Notify will be documented in this file.
   - Eliminates race conditions between Stop and SubagentStop hooks
   - Only one background timer runs per wait cycle
   - Predictable 5-minute countdown from first stop
+- **More resilient background timer** - Uses `nohup` to ensure timer survives if parent shell exits
 
 ## [1.0.0] - 2025-01-28
 
