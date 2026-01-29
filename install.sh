@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
+# Ensure we're running in bash, not sh
+if [ -z "$BASH_VERSION" ]; then
+    echo "Error: This script requires bash. Run with: bash install.sh"
+    exit 1
+fi
+
 echo "gsd-notify installer"
 echo "===================="
 echo ""
@@ -31,11 +37,27 @@ if [[ ! "$DISCORD_ID" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+# Determine the correct home path
+# On Windows Git Bash, $HOME is /c/Users/... but we need C:/Users/... for Claude Code
+get_claude_path() {
+    local unix_path="$1"
+    # Check if we're in Git Bash/MSYS on Windows
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "mingw"* || "$OSTYPE" == "cygwin" ]]; then
+        # Convert /c/Users/... to C:/Users/...
+        echo "$unix_path" | sed 's|^/\([a-zA-Z]\)/|\1:/|'
+    else
+        echo "$unix_path"
+    fi
+}
+
+CLAUDE_DIR="$HOME/.claude"
+CLAUDE_DIR_FOR_HOOK=$(get_claude_path "$CLAUDE_DIR")
+
 # Create ~/.claude directory if it doesn't exist
-mkdir -p "$HOME/.claude"
+mkdir -p "$CLAUDE_DIR"
 
 # Write the notification script
-cat > "$HOME/.claude/gsd-notify.sh" << 'SCRIPT'
+cat > "$CLAUDE_DIR/gsd-notify.sh" << 'SCRIPT'
 #!/usr/bin/env bash
 
 WEBHOOK_URL="__WEBHOOK_URL__"
@@ -68,6 +90,14 @@ curl -s -X POST "$WEBHOOK_URL" \
 echo "$NOW" > "$PING_FILE"
 SCRIPT
 
+# Escape special characters for sed replacement (& and \ are special in sed replacement)
+escape_for_sed() {
+    printf '%s' "$1" | sed 's/[&/\]/\\&/g'
+}
+
+WEBHOOK_ESCAPED=$(escape_for_sed "$WEBHOOK_URL")
+DISCORD_ESCAPED=$(escape_for_sed "$DISCORD_ID")
+
 # Cross-platform sed -i (macOS vs Linux)
 sed_inplace() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -78,15 +108,15 @@ sed_inplace() {
 }
 
 # Replace placeholders with actual values
-sed_inplace "s|__WEBHOOK_URL__|$WEBHOOK_URL|g" "$HOME/.claude/gsd-notify.sh"
-sed_inplace "s|__DISCORD_ID__|$DISCORD_ID|g" "$HOME/.claude/gsd-notify.sh"
+sed_inplace "s|__WEBHOOK_URL__|$WEBHOOK_ESCAPED|g" "$CLAUDE_DIR/gsd-notify.sh"
+sed_inplace "s|__DISCORD_ID__|$DISCORD_ESCAPED|g" "$CLAUDE_DIR/gsd-notify.sh"
 
 # Make executable
-chmod +x "$HOME/.claude/gsd-notify.sh"
+chmod +x "$CLAUDE_DIR/gsd-notify.sh"
 
 # Update settings.json with hooks
-SETTINGS_FILE="$HOME/.claude/settings.json"
-HOOK_CMD="bash \"$HOME/.claude/gsd-notify.sh\""
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+HOOK_CMD="bash \\\"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\\\""
 
 # Claude Code requires this nested hook structure:
 # { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "..." }] }] } }
@@ -94,14 +124,21 @@ HOOK_CMD="bash \"$HOME/.claude/gsd-notify.sh\""
 if [ -f "$SETTINGS_FILE" ]; then
     # File exists - need to merge hooks
     if command -v node &> /dev/null; then
-        node -e "
+        # Try to parse and merge, fall back to fresh file if JSON is corrupt
+        if node -e "
 const fs = require('fs');
-const settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
+let settings;
+try {
+    settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
+} catch (e) {
+    console.error('Warning: Existing settings.json is corrupt, creating fresh file.');
+    settings = {};
+}
 
 if (!settings.hooks) settings.hooks = {};
 
 const hookEntry = {
-    hooks: [{ type: 'command', command: '$HOOK_CMD' }]
+    hooks: [{ type: 'command', command: 'bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"' }]
 };
 
 // Helper to add hook
@@ -124,7 +161,11 @@ addHook('Stop');
 addHook('SubagentStop');
 
 fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
-"
+" 2>&1; then
+            : # Success
+        else
+            echo "Warning: Failed to update settings.json with Node.js."
+        fi
     else
         echo "Warning: Node.js not found. Creating fresh settings.json (existing settings will be lost)."
         cat > "$SETTINGS_FILE" << EOF
@@ -133,14 +174,14 @@ fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOOK_CMD" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOOK_CMD" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
         ]
       }
     ]
@@ -156,14 +197,14 @@ else
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOOK_CMD" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "$HOOK_CMD" }
+          { "type": "command", "command": "bash \"$CLAUDE_DIR_FOR_HOOK/gsd-notify.sh\"" }
         ]
       }
     ]
@@ -181,12 +222,15 @@ cat > "$TEMP_JSON" << EOF
 {"content": "<@$DISCORD_ID> It's time to GSD!"}
 EOF
 
+# Disable set -e for curl so we can handle errors gracefully
+set +e
 curl -s -X POST "$WEBHOOK_URL" \
     -H "Content-Type: application/json" \
     -d @"$TEMP_JSON" \
     > /dev/null 2>&1
-
 RESULT=$?
+set -e
+
 rm -f "$TEMP_JSON"
 
 if [ $RESULT -eq 0 ]; then
@@ -194,5 +238,5 @@ if [ $RESULT -eq 0 ]; then
     echo ""
     echo "Setup complete. You'll be pinged when Claude Code needs attention."
 else
-    echo "Warning: Test ping may have failed. Check your webhook URL."
+    echo "Warning: Test ping may have failed (network error). Check your webhook URL."
 fi
