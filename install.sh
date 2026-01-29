@@ -63,13 +63,13 @@ chmod +x ~/.claude/gsd-notify.sh
 
 # Update settings.json with hooks
 SETTINGS_FILE="$HOME/.claude/settings.json"
-HOOK_CMD="$HOME/.claude/gsd-notify.sh"
+HOOK_CMD="bash $HOME/.claude/gsd-notify.sh"
+
+# Claude Code requires this nested hook structure:
+# { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "..." }] }] } }
 
 if [ -f "$SETTINGS_FILE" ]; then
     # File exists - need to merge hooks
-    TEMP_FILE=$(mktemp)
-
-    # Use node if available, otherwise use basic approach
     if command -v node &> /dev/null; then
         node -e "
 const fs = require('fs');
@@ -77,15 +77,24 @@ const settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
 
 if (!settings.hooks) settings.hooks = {};
 
-// Helper to add hook if not present
+const hookEntry = {
+    hooks: [{ type: 'command', command: '$HOOK_CMD' }]
+};
+
+// Helper to add hook
 function addHook(hookName) {
-    if (!settings.hooks[hookName]) settings.hooks[hookName] = [];
-    if (!Array.isArray(settings.hooks[hookName])) {
-        settings.hooks[hookName] = [settings.hooks[hookName]];
+    if (!settings.hooks[hookName]) {
+        settings.hooks[hookName] = [];
     }
-    // Remove old gsd-notify entries and add fresh one
-    settings.hooks[hookName] = settings.hooks[hookName].filter(h => !h.includes('gsd-notify'));
-    settings.hooks[hookName].push('$HOOK_CMD');
+    // Remove old gsd-notify entries
+    settings.hooks[hookName] = settings.hooks[hookName].filter(h => {
+        if (h.hooks && Array.isArray(h.hooks)) {
+            return !h.hooks.some(inner => inner.command && inner.command.includes('gsd-notify'));
+        }
+        return true;
+    });
+    // Add new entry
+    settings.hooks[hookName].push(hookEntry);
 }
 
 addHook('Stop');
@@ -94,12 +103,24 @@ addHook('SubagentStop');
 fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
 "
     else
-        # Fallback: create fresh settings with just hooks
+        echo "Warning: Node.js not found. Creating fresh settings.json (existing settings will be lost)."
         cat > "$SETTINGS_FILE" << EOF
 {
   "hooks": {
-    "Stop": ["$HOOK_CMD"],
-    "SubagentStop": ["$HOOK_CMD"]
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOOK_CMD" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOOK_CMD" }
+        ]
+      }
+    ]
   }
 }
 EOF
@@ -109,8 +130,20 @@ else
     cat > "$SETTINGS_FILE" << EOF
 {
   "hooks": {
-    "Stop": ["$HOOK_CMD"],
-    "SubagentStop": ["$HOOK_CMD"]
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOOK_CMD" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOOK_CMD" }
+        ]
+      }
+    ]
   }
 }
 EOF
@@ -119,13 +152,21 @@ fi
 echo ""
 echo "Sending test ping..."
 
-# Send test ping
+# Send test ping using a temp file to avoid escaping issues
+TEMP_JSON=$(mktemp)
+cat > "$TEMP_JSON" << EOF
+{"content": "<@$DISCORD_ID> It's time to GSD!"}
+EOF
+
 curl -s -X POST "$WEBHOOK_URL" \
     -H "Content-Type: application/json" \
-    -d "{\"content\": \"<@$DISCORD_ID> It's time to GSD!\"}" \
+    -d @"$TEMP_JSON" \
     > /dev/null 2>&1
 
-if [ $? -eq 0 ]; then
+RESULT=$?
+rm -f "$TEMP_JSON"
+
+if [ $RESULT -eq 0 ]; then
     echo "Test ping sent! Check Discord."
     echo ""
     echo "Setup complete. You'll be pinged when Claude Code needs attention."
