@@ -109,8 +109,10 @@ cat > "$CLAUDE_DIR/gsd-wait.sh" << 'SCRIPT'
 WAIT_FILE="$HOME/.claude/.waiting_since"
 NOTIFY_SCRIPT="$HOME/.claude/gsd-notify.sh"
 
-# Always update timestamp to most recent stop
-# (SubagentStop may fire before main agent finishes)
+# Only start timer if not already waiting (first Stop wins)
+# Subsequent Stops are ignored until user activity resets state
+[ -f "$WAIT_FILE" ] && exit 0
+
 date +%s > "$WAIT_FILE"
 
 # Spawn delayed notification check (5 min + small buffer)
