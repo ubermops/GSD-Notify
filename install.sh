@@ -72,9 +72,13 @@ cat > "$CLAUDE_DIR/gsd-notify.sh" << 'SCRIPT'
 
 WEBHOOK_URL="__WEBHOOK_URL__"
 DISCORD_ID="__DISCORD_ID__"
-WAIT_FILE="$HOME/.claude/.waiting_since"
-NOTIFIED_FILE="$HOME/.claude/.notified"
+STATE_DIR="$HOME/.claude/gsd-state"
 DELAY=300  # 5 minutes in seconds
+
+# Session ID passed as argument
+SESSION_ID="${1:-default}"
+WAIT_FILE="$STATE_DIR/.waiting_since_$SESSION_ID"
+NOTIFIED_FILE="$STATE_DIR/.notified_$SESSION_ID"
 
 # If no wait file, user already responded - exit silently
 [ ! -f "$WAIT_FILE" ] && exit 0
@@ -106,27 +110,43 @@ SCRIPT
 cat > "$CLAUDE_DIR/gsd-wait.sh" << 'SCRIPT'
 #!/usr/bin/env bash
 
-WAIT_FILE="$HOME/.claude/.waiting_since"
+STATE_DIR="$HOME/.claude/gsd-state"
 NOTIFY_SCRIPT="$HOME/.claude/gsd-notify.sh"
 
+# Read JSON from stdin and extract session_id
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] && SESSION_ID="default"
+
+WAIT_FILE="$STATE_DIR/.waiting_since_$SESSION_ID"
+
+# Ensure state directory exists
+mkdir -p "$STATE_DIR"
+
 # Only start timer if not already waiting (first Stop wins)
-# Subsequent Stops are ignored until user activity resets state
 [ -f "$WAIT_FILE" ] && exit 0
 
 date +%s > "$WAIT_FILE"
 
 # Spawn delayed notification check (5 min + small buffer)
 # nohup ensures process survives if parent shell exits
-nohup bash -c "sleep 305 && bash \"$NOTIFY_SCRIPT\"" >/dev/null 2>&1 &
+nohup bash -c "sleep 305 && bash \"$NOTIFY_SCRIPT\" \"$SESSION_ID\"" >/dev/null 2>&1 &
 SCRIPT
 
 # Write the activity script (called on user input - clears wait state)
 cat > "$CLAUDE_DIR/gsd-activity.sh" << 'SCRIPT'
 #!/usr/bin/env bash
 
-# User is active - clear wait state
-rm -f "$HOME/.claude/.waiting_since" 2>/dev/null
-rm -f "$HOME/.claude/.notified" 2>/dev/null
+STATE_DIR="$HOME/.claude/gsd-state"
+
+# Read JSON from stdin and extract session_id
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] && SESSION_ID="default"
+
+# Clear state for this session only
+rm -f "$STATE_DIR/.waiting_since_$SESSION_ID" 2>/dev/null
+rm -f "$STATE_DIR/.notified_$SESSION_ID" 2>/dev/null
 SCRIPT
 
 # Escape & for sed replacement (& means "matched pattern" in sed)

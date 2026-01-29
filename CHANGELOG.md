@@ -10,6 +10,10 @@ All notable changes to GSD Notify will be documented in this file.
   - Only one background timer runs per wait cycle
   - Predictable 5-minute countdown from first stop
 - **More resilient background timer** - Uses `nohup` to ensure timer survives if parent shell exits
+- **Per-session state tracking** - Multiple Claude sessions can run independently
+  - Each session has its own timer and notification state
+  - Sessions are identified by Claude Code's session_id
+  - State files stored in `~/.claude/gsd-state/`
 
 ## [1.0.0] - 2025-01-28
 
