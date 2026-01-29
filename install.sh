@@ -97,9 +97,10 @@ curl -s -X POST "$WEBHOOK_URL" \
 echo "$NOW" > "$PING_FILE"
 SCRIPT
 
-# Escape special characters for sed replacement (& and \ are special in sed replacement)
+# Escape & for sed replacement (& means "matched pattern" in sed)
+# Discord URLs and numeric IDs won't have other special chars
 escape_for_sed() {
-    printf '%s' "$1" | sed 's/[&/\]/\\&/g'
+    printf '%s' "$1" | sed 's/&/\\&/g'
 }
 
 WEBHOOK_ESCAPED=$(escape_for_sed "$WEBHOOK_URL")
